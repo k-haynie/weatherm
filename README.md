@@ -2,11 +2,12 @@
 A weather forecast report without leaving the comfort of your terminal.
 
 ### Examples
-[Brief Summary Mode](./summary.png)
-
-[Extensive Detail Mode](./detail.png)
-
-[Graph Forecast](./extreme_detail.png)
+#### Brief Summary Mode
+![Brief Summary Mode](./summary.png)
+#### Extensive Detail Mode
+![Extensive Detail Mode](./detail.png)
+#### Maximum Graph Forecast
+![Graph Forecast](./extreme_detail.png)
 
 ### Setup
 Requires `python` and its `json, os, sys` libraries (which are included in the python standard library by default).
