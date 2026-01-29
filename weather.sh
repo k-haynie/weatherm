@@ -1,25 +1,34 @@
 #!/bin/sh 
 
 # depends on python, json, os, and feedgnuplot
-# default to university zip
 
 zip="$1"
 hours="$2"
 
+# color codes: https://i.sstatic.net/9UVnC.png
+ansi_reset="\033[0m"
+ansi_green="\033[92m"
+ansi_orange="\033[33m"
+ansi_red="\033[31m"
+
 # wanrs against invalid zip codes
 if [ "${#1}" != 5 ] || ! [[ "$1" =~ [0-9]{5} ]]; then 
-    echo "Must use a five-digit zip code."
+    echo "First argument must use a five-digit zip code."
     exit
 fi;
 
 if (( "$hours" > 155 )) ; then
-    echo "Must use a 1-156 future hour scale."
+    echo "Second argument must use a 1-155 future hour scale."
     exit
 fi;
 
+clear
+echo -e "$ansi_green▓▓▓▓▓╣   ⏾   Weatherm   ⚡  ╠▓▓▓▓▓$ansi_reset"
+echo -e "  1)$ansi_red Zip Code: $zip... $ansi_reset"
+
 latlng=$(curl -s "https://nominatim.openstreetmap.org/search?postalcode=$zip&country=US&format=json&limit=1&addressdetails=1" | sed -E 's/,/\n/g' | grep -Eo "^\"(lat|lon)\":\"-?[0-9]+\.[0-9]+\"" | grep -Eo "(-)?[0-9]+\.([0-9]{4})" | tr -s '\n', ',')
 
-echo -e "Zip Code: $zip\nLatLng: $latlng"
+echo -e "  2)$ansi_orange LatLng: $latlng...$ansi_reset"
 
 # output contains several columns:
 # 1. DateTime of Forecast
@@ -31,7 +40,9 @@ echo -e "Zip Code: $zip\nLatLng: $latlng"
 # 7. wind direction
 output=`python scraper.py "$latlng" $hours`
 
-limited_output=`echo -E "$output" | head -n $hours | awk -F ',' '{ print $1 " " $2 " " $3 }'`
+metadata=`echo "$output" | head -n 1`
+
+limited_output=`echo -E "$output" | tail -n +2 | head -n $hours | awk -F ',' '{ print $1 " " $2 " " $3 }'`
 
 # -- find the temps --  
 temps=`echo -E "$output" | grep -E "^\"" | awk -F ',' '{print $2}' | sort -n`
@@ -46,19 +57,27 @@ max_prec=`echo -E "$prec" | tail -n 1 | xargs -I{} bash -c "echo '{} + 0.05'| bc
 shortForecast=`echo -E "$output" | grep -E "^\"" | awk -F ',' '{print $4}' | sort -n`
 wind=`echo -E "$output" | grep -E "^\"" | awk -F ',' '{print $5 " " $6}' | sort -n`
 
-table=`echo -E "$output" \
+table=`echo -E "$output" | tail -n +2 \
     | grep -E "^\"" \
     | head -n "$hours" \
     | awk -F ',' '
         BEGIN {
             sunny = "\033[93m ◯ "
-            yellow = "\033[33m"
-            cloudy = "\033[93m ≋ "
+            yellow = "\033[91m"
+            cloudy = "\033[36m ≋ "
             rain = "\033[34m ∴ "
-            snow = "\033[37m ✶ "
+            snow = "\033[1;37m ✶ "
             clear = "\033[27m ⍜ "
             reset = "\033[0m"
             green = "\033[32m"
+            n = "↑"
+            nw = "↖"
+            w = "←"
+            ne = "↗"
+            e = "→"
+            s = "↓"
+            se = "↘"
+            sw = "↙"
         }
         { print green }
         { system("date -d" $1 " +%a_%I_%p") }
@@ -72,12 +91,23 @@ table=`echo -E "$output" \
             else { c = reset }
             printf "%s%s%s", c, $4, reset
         }
-        { print "," $5 " " $6 }' \
+        {
+            if (index($6, "NE") > 0) { d = ne } 
+            else if (index($6, "NW") > 0) { d = nw }
+            else if (index($6, "SE") > 0) { d = se }
+            else if (index($6, "SW") > 0) { d = sw }
+            else if (index($6, "N") == 1) { d = n }
+            else if (index($6, "W") > 0) { d = w }
+            else if (index($6, "E") > 0) { d = e }
+            else { d = s }
+
+            print ",\033[34m" d " " $5 " " $6 reset
+        }' \
     | tr -s '\n' ':' \
     | sed -E 's/0.0 /0 /g; s/-,/,/g; s/_/ /g; s/([A-Z])-/\1/g; s/:([A-Z])/\n\1/g; s/://g;s/0\.0?//g' \
-    | column -s ',' -o ' | ' -t \
-    --table-columns " Time of Day,Temp,Rain,Desc,Wind" \
-    --table-right 1,2,3 | sed -E 's/(\s+[A-Z][a-z]{2} 01 AM)/\n\1/g'`
+    | column -s ',' -o '   ' -t \
+    --table-columns " Time of Day,Temp,Precip,Description,Wind" \
+    --table-right 1,2,3 | sed -E 's/(\s+[A-Z][a-z]{2} 12 AM)/\n\1/g'`
 
 # echo "$output" > output.txt
 # echo -E "$min_temp" "$max_temp" "$min_prec" "$max_prec"
@@ -99,7 +129,7 @@ graph=`echo -e "$limited_output"| feedgnuplot \
     --title "$hours-hour Forecast" \
     --xlabel "\nTime of Day" \
     --ylabel "Temp" \
-    --y2label " Rain\n Chance" \
+    --y2label " Precip\n Chance" \
     --legend "Degrees (°F)" 1\
     --legend "Precip (%)" 2\
     --ymin 0 --ymax "$max_temp" \
@@ -107,5 +137,8 @@ graph=`echo -e "$limited_output"| feedgnuplot \
     --legend 0 "Temp" \
     --legend 1 "Precip" \
     --exit`
+
+echo -e "  3)$ansi_green $metadata$ansi_reset"
+sleep 1
 
 echo -e "\n\n$table$graph"
