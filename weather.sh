@@ -1,11 +1,25 @@
 #!/bin/sh 
 
 # depends on python, json, os, and feedgnuplot
+# default to university zip
 
+zip="$1"
+hours="$2"
 
-output=`python scraper.py`
+# wanrs against invalid zip codes
+if [ "${#1}" != 5 ] || ! [[ "$1" =~ [0-9]{5} ]]; then 
+    echo "Must use a five-digit zip code."
+    exit
+fi;
 
-limited_output=`echo -E "$output" | awk -F ',' '{ print $1 " " $2 " " $3 }'`
+if (( "$hours" > 155 )) ; then
+    echo "Must use a 1-156 future hour scale."
+    exit
+fi;
+
+latlng=$(curl -s "https://nominatim.openstreetmap.org/search?postalcode=$zip&country=US&format=json&limit=1&addressdetails=1" | sed -E 's/,/\n/g' | grep -Eo "^\"(lat|lon)\":\"-?[0-9]+\.[0-9]+\"" | grep -Eo "(-)?[0-9]+\.([0-9]{4})" | tr -s '\n', ',')
+
+echo -e "Zip Code: $zip\nLatLng: $latlng"
 
 # output contains several columns:
 # 1. DateTime of Forecast
@@ -15,8 +29,9 @@ limited_output=`echo -E "$output" | awk -F ',' '{ print $1 " " $2 " " $3 }'`
 # 5. detailed forecast 
 # 6. wind speed (and mph)
 # 7. wind direction
+output=`python scraper.py "$latlng" $hours`
 
-# echo -E "$output"
+limited_output=`echo -E "$output" | head -n $hours | awk -F ',' '{ print $1 " " $2 " " $3 }'`
 
 # -- find the temps --  
 temps=`echo -E "$output" | grep -E "^\"" | awk -F ',' '{print $2}' | sort -n`
@@ -33,6 +48,7 @@ wind=`echo -E "$output" | grep -E "^\"" | awk -F ',' '{print $5 " " $6}' | sort 
 
 table=`echo -E "$output" \
     | grep -E "^\"" \
+    | head -n "$hours" \
     | awk -F ',' '
         BEGIN {
             sunny = "\033[93m ◯ "
@@ -57,11 +73,11 @@ table=`echo -E "$output" \
             printf "%s%s%s", c, $4, reset
         }
         { print "," $5 " " $6 }' \
-    | tr -s '\n' '-' \
-    | sed -E 's/-([A-Z])/\n\1/g;s/0.0 /0 /g;s/-,/,/g;s/_/ /g;s/([A-Z])-/\1/g;s/-//g' \
+    | tr -s '\n' ':' \
+    | sed -E 's/0.0 /0 /g; s/-,/,/g; s/_/ /g; s/([A-Z])-/\1/g; s/:([A-Z])/\n\1/g; s/://g;s/0\.0?//g' \
     | column -s ',' -o ' | ' -t \
     --table-columns " Time of Day,Temp,Rain,Desc,Wind" \
-    --table-right 1,2,3`
+    --table-right 1,2,3 | sed -E 's/(\s+[A-Z][a-z]{2} 01 AM)/\n\1/g'`
 
 # echo "$output" > output.txt
 # echo -E "$min_temp" "$max_temp" "$min_prec" "$max_prec"
@@ -80,7 +96,7 @@ graph=`echo -e "$limited_output"| feedgnuplot \
     --unset grid \
     --timefmt '"%Y-%m-%dT%H:%M:%S"'\
     --set 'format x "%a\n%I %p"' \
-    --title "24-hour Forecast" \
+    --title "$hours-hour Forecast" \
     --xlabel "\nTime of Day" \
     --ylabel "Temp" \
     --y2label " Rain\n Chance" \
@@ -88,7 +104,8 @@ graph=`echo -e "$limited_output"| feedgnuplot \
     --legend "Precip (%)" 2\
     --ymin 0 --ymax "$max_temp" \
     --y2min 0 --y2max "$max_prec" \
-    --cmds 'set style line 3 lc rgb "yellow" lw 2'\
+    --legend 0 "Temp" \
+    --legend 1 "Precip" \
     --exit`
 
-echo -e "\n$table\n$graph"
+echo -e "\n\n$table$graph"
