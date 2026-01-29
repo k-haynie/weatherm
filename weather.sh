@@ -4,6 +4,7 @@
 
 zip="$1"
 hours="$2"
+summary="$3"
 
 # color codes: https://i.sstatic.net/9UVnC.png
 ansi_reset="\033[0m"
@@ -19,6 +20,11 @@ fi;
 
 if (( "$hours" > 155 )) ; then
     echo "Second argument must use a 1-155 future hour scale."
+    exit
+fi;
+
+if ! [[ "$3" =~ (yes|no) ]]; then
+    echo "Third argument must be yes for summary or no for details."
     exit
 fi;
 
@@ -38,7 +44,7 @@ echo -e "  2)$ansi_orange LatLng: $latlng...$ansi_reset"
 # 5. detailed forecast 
 # 6. wind speed (and mph)
 # 7. wind direction
-output=`python scraper.py "$latlng" $hours`
+output=`python scraper.py "$latlng" $hours $summary`
 
 metadata=`echo "$output" | head -n 1`
 
@@ -56,6 +62,14 @@ max_prec=`echo -E "$prec" | tail -n 1 | xargs -I{} bash -c "echo '{} + 0.05'| bc
 
 shortForecast=`echo -E "$output" | grep -E "^\"" | awk -F ',' '{print $4}' | sort -n`
 wind=`echo -E "$output" | grep -E "^\"" | awk -F ',' '{print $5 " " $6}' | sort -n`
+
+table_cols=" Time of Day,Temp,Description"
+table_align="1,2"
+
+if [[ "$3" =~ (no) ]]; then
+    table_cols=" Time of Day,Temp,Precip,Description,Wind"
+    table_align="1,2,3"
+fi;
 
 table=`echo -E "$output" | tail -n +2 \
     | grep -E "^\"" \
@@ -81,15 +95,23 @@ table=`echo -E "$output" | tail -n +2 \
         }
         { print green }
         { system("date -d" $1 " +%a_%I_%p") }
-        { print reset "," yellow $2 reset "°F," "\033[36m" $3 reset " %," }
+        { print reset "," yellow $2 reset "°F," }
         { 
-            if (index($4, "Sunny") > 0) { c = sunny }
-            else if (index($4, "Cloudy") > 0) { c = cloudy }
-            else if (index($4, "Clear") > 0) { c = clear }
-            else if (index($4, "Rain") > 0) { c = rain }
-            else if (index($4, "Snow") > 0 || index($4, "Ice") > 0) { c = snow }
+            if (length($7) == 0) {
+                print "\033[36m" $3 reset " %," 
+            }
+        }
+        {
+            if (length($7) == 0) { str = $4 }
+            else { str = $7 }
+
+            if (index(toupper(str), "SUNNY") > 0) { c = sunny }
+            else if (index(toupper(str), "CLOUD") > 0) { c = cloudy }
+            else if (index(toupper(str), "CLEAR") > 0) { c = clear }
+            else if (index(toupper(str), "RAIN") > 0) { c = rain }
+            else if (index(toupper(str), "SNOW") > 0 || index(toupper(str), "ICE") > 0) { c = snow }
             else { c = reset }
-            printf "%s%s%s", c, $4, reset
+            printf "%s%s%s", c, str, reset
         }
         {
             if (index($6, "NE") > 0) { d = ne } 
@@ -101,13 +123,16 @@ table=`echo -E "$output" | tail -n +2 \
             else if (index($6, "E") > 0) { d = e }
             else { d = s }
 
-            print ",\033[34m" d " " $5 " " $6 reset
+            if (length($7) == 0)
+            {
+                print ",\033[34m" d " " $5 " " $6 reset
+            }
         }' \
     | tr -s '\n' ':' \
     | sed -E 's/0.0 /0 /g; s/-,/,/g; s/_/ /g; s/([A-Z])-/\1/g; s/:([A-Z])/\n\1/g; s/://g;s/0\.0?//g' \
     | column -s ',' -o '   ' -t \
-    --table-columns " Time of Day,Temp,Precip,Description,Wind" \
-    --table-right 1,2,3 | sed -E 's/(\s+[A-Z][a-z]{2} 12 AM)/\n\1/g'`
+    --table-columns "$table_cols" \
+    --table-right $table_align | sed -E 's/(\s+[A-Z][a-z]{2} 12 AM)/\n\1/g'`
 
 # echo "$output" > output.txt
 # echo -E "$min_temp" "$max_temp" "$min_prec" "$max_prec"
@@ -141,4 +166,9 @@ graph=`echo -e "$limited_output"| feedgnuplot \
 echo -e "  3)$ansi_green $metadata$ansi_reset"
 sleep 1
 
-echo -e "\n\n$table$graph"
+echo -e "\n\n$table"
+if [[ "$3" =~ (no) ]]; then
+   echo -e "$graph"
+else
+    echo
+fi;
