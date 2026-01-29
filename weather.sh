@@ -28,8 +28,8 @@ if ! [[ "$3" =~ (yes|no) ]]; then
     exit
 fi;
 
-clear
-echo -e "$ansi_green▓▓▓▓▓╣   ⏾   Weatherm   ⚡  ╠▓▓▓▓▓$ansi_reset"
+# clear
+echo -e "\n$ansi_green▓▓▓▓▓╣   ⏾   Weatherm   ⚡  ╠▓▓▓▓▓$ansi_reset"
 echo -e "  1)$ansi_red Zip Code: $zip... $ansi_reset"
 
 latlng=$(curl -s "https://nominatim.openstreetmap.org/search?postalcode=$zip&country=US&format=json&limit=1&addressdetails=1" | sed -E 's/,/\n/g' | grep -Eo "^\"(lat|lon)\":\"-?[0-9]+\.[0-9]+\"" | grep -Eo "(-)?[0-9]+\.([0-9]{4})" | tr -s '\n', ',')
@@ -44,7 +44,61 @@ echo -e "  2)$ansi_orange LatLng: $latlng...$ansi_reset"
 # 5. detailed forecast 
 # 6. wind speed (and mph)
 # 7. wind direction
-output=`python scraper.py "$latlng" $hours $summary`
+
+# make this a single script by embedding some python
+python_code=$(cat << EOF
+import json, os, sys
+
+# variables
+latlng = ",".join(i[:7] for i in sys.argv[1].split(",") if i != ",")
+summary=(sys.argv[3] == "yes")
+hour_cutoff = min(int(sys.argv[2]), 13 if summary else 155)
+
+# use the lat_lng to find the govt api url to query
+info = json.loads(os.popen(f"curl -s https://api.weather.gov/points/{sys.argv[1][:-1]}").read())
+
+# in the style of:
+# https://api.weather.gov/points/37.4137,-79.1424
+# https://api.weather.gov/gridpoints/RNK/102,79/forecast/hourly
+
+location = info["properties"]["relativeLocation"]["properties"]
+loc_str = f'{location["city"]}, {location["state"]}'
+output = f"{loc_str}\n"
+
+if not summary:
+    target_url = info["properties"]["forecastHourly"]
+    response = json.loads(os.popen(f"curl -s {target_url}").read())
+
+    for i in response["properties"]["periods"][:hour_cutoff]:
+        output += ",".join([
+            '"' + i["startTime"][:19]+ '"',
+            str(i["temperature"]),
+            str(i["probabilityOfPrecipitation"]["value"]/100),
+            i["shortForecast"],
+            i["windSpeed"],
+            i["windDirection"],
+            ""
+        ]) + "\n"
+else:
+    target_url = info["properties"]["forecast"]
+    response = json.loads(os.popen(f"curl -s {target_url}").read())
+
+    for i in response["properties"]["periods"][:hour_cutoff]:
+        output += ",".join([
+            '"' + i["startTime"][:19]+ '"',
+            str(i["temperature"]),
+            str(i["probabilityOfPrecipitation"]["value"]/100),
+            i["shortForecast"],
+            i["windSpeed"],
+            i["windDirection"],
+            i["detailedForecast"].replace(",", " ")
+        ]) + "\n"
+
+print(output)
+EOF
+)
+
+output=`python -c "$python_code" "$latlng" $hours $summary`
 
 metadata=`echo "$output" | head -n 1`
 
